@@ -28,8 +28,13 @@ def run_checks(proc: Processor, tables: dict) -> dict:
     info = time.describe()
 
     checks["timestep_weights"] = {"ok": time.check_weights() < 1e-9, "max_difference": time.check_weights()}
+    # the weighted model timesteps cover the modelled period (a full year, or e.g. a subset of days) without gaps
     hours = info["real_hours_represented"]
-    checks["hours_in_year"] = {"ok": hours in (8760.0, 8784.0), "hours": hours}
+    real = pd.DatetimeIndex(time.expansion["real"])
+    last_resolution = float(time.resolution.reindex([time.expansion["rep"].iloc[-1]]).iloc[0])
+    period = (real[-1] - real[0]).total_seconds() / 3600 + last_resolution
+    checks["hours_in_period"] = {"ok": abs(hours - period) < 1e-6, "hours": hours, "period_hours": period,
+                                 "full_year": hours in (8760.0, 8784.0)}
 
     # monthly and hourly tables add up to the annual ones
     for annual_name in [n for n in tables if n.endswith("_sum")]:

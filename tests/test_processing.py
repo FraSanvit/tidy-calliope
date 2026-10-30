@@ -147,7 +147,7 @@ def test_shadow_prices_clustered_full_year(clustered_out):
     assert len(a) == 8760
     # real day d stands for typical day d % 2, i.e. model timesteps on 2018-01-01 (day 0) or 2018-01-02 (day 1)
     real = pd.to_datetime(a.index)
-    typical = pd.Timestamp("2018-01-01") + pd.to_timedelta((real.dayofyear - 1) % 2, unit="D") + pd.to_timedelta(real.hour, unit="h")
+    typical = pd.Timestamp("2018-01-01") + pd.to_timedelta((real.day_of_year - 1) % 2, unit="D") + pd.to_timedelta(real.hour, unit="h")
     expected = price("A_1", pd.DatetimeIndex(typical)) / 0.1  # weights removed; cost scale 1, energy scale 0.1
     assert np.allclose(a.values, expected)
     assert a.iloc[0] != a.iloc[24]  # 1 and 2 January come from different typical days
@@ -175,6 +175,55 @@ def test_shadow_prices_resampled_and_constraints(resampled_out):
 def test_shadow_prices_off_by_default(resampled_file, tmp_path):
     (summary,) = process(resampled_file, tmp_path)
     assert "shadow_price_system_balance" not in summary["tables"]
+
+
+def _cost_by_spore(folder):
+    return _read(folder, "total_system_cost").groupby("spores")["total_system_cost"].sum()
+
+
+def test_spores_combined_file(spores_file, tmp_path):
+    (summary,) = process(spores_file, tmp_path, HOURLY)
+    folder = tmp_path / "spores-run"
+    assert summary["spores"] == [0, 1] and summary["checks_failed"] == []
+    assert set(summary["checks"]) >= {"spores=0", "spores=1", "spores_cost_within_slack"}
+    cost = _cost_by_spore(folder)
+    assert cost[1] == pytest.approx(1.2 * cost[0])
+    caps = _read(folder, "nameplate_capacity")
+    pv = caps[caps.techs == "pv"].groupby("spores")["nameplate_capacity"].sum()
+    assert pv[1] == pytest.approx(2 * pv[0])
+    flow = _read(folder, "flow_out")
+    assert list(flow.columns[:3]) == ["scenario", "spores", "techs"] and set(flow["spores"]) == {0, 1}
+
+
+def test_spores_per_spore_files_match_combined(spores_file, per_spore_dir, tmp_path):
+    process(spores_file, tmp_path / "combined")
+    (summary,) = process(per_spore_dir, tmp_path / "split")  # a folder of spore_<n>.nc files: one run
+    assert summary["scenario"] == "max_pv" and summary["spores"] == [0, 1] and summary["checks_failed"] == []
+    pd.testing.assert_series_equal(_cost_by_spore(tmp_path / "combined" / "spores-run"),
+                                   _cost_by_spore(tmp_path / "split" / "max_pv"))
+
+
+def test_spores_single_file_borrows_inputs(per_spore_dir, tmp_path):
+    (summary,) = process(f"{per_spore_dir}/spore_1.nc", tmp_path)  # no inputs: taken from spore_0.nc
+    assert summary["spores"] == [1]
+    assert set(_read(tmp_path / "max_pv", "total_system_cost")["spores"]) == {1}
+
+
+def test_spores_cost_above_slack_fails(spores_over_slack_file, tmp_path):
+    (summary,) = process(spores_over_slack_file, tmp_path)
+    assert summary["checks_failed"] == ["spores_cost_within_slack"]
+    assert list(summary["checks"]["spores_cost_within_slack"]["above_limit"]) == [1]
+
+
+def test_subset_period_hours(spores_file):
+    """A model of part of a year: the check compares with the modelled period, not with 8760 h."""
+    from tidy_calliope.checks import run_checks
+    from tidy_calliope.outputs import Processor
+    from tidy_calliope.reader import open_results, spore_views
+
+    model = spore_views(open_results(spores_file))[0]
+    check = run_checks(Processor(model, load_config()), {})["hours_in_period"]
+    assert check["ok"] and check["full_year"]
 
 
 def test_cli_missing_path(tmp_path, capsys):

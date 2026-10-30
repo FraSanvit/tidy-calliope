@@ -99,8 +99,9 @@ class Naming:
         if series.empty:
             return series
         df = series.rename("value").reset_index()
-        df["techs"] = df["techs"].map(self.tech)
-        df = df[df["techs"].notna()]
+        if "techs" in df:
+            df["techs"] = df["techs"].map(self.tech)
+            df = df[df["techs"].notna()]
         if "nodes" in df:
             df["locs"] = df.pop("nodes").map(self.region)
         if "carriers" in df:

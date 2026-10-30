@@ -1,6 +1,7 @@
 """Reading Calliope 0.7 result files (NetCDF with `inputs` and `results` groups) without importing Calliope."""
 
 import glob
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,20 +12,35 @@ import xarray as xr
 from tidy_calliope.timeinfo import TimeInfo
 
 
+SPORE_FILE = re.compile(r"^spore_(\d+)$")  # Calliope's `save_per_spore_path` files: spore_<n>.nc
+
+
 @dataclass
 class ModelResults:
+    """The inputs and results of one model run, or of one SPORE (`spore`) of a SPORES run."""
+
     path: Path
     scenario: str
     inputs: xr.Dataset
     results: xr.Dataset
-    time: TimeInfo = field(init=False)
+    spore: int | None = None
+    time: TimeInfo | None = field(default=None)
 
     def __post_init__(self):
-        self.time = TimeInfo(self.inputs)
+        if self.time is None:
+            self.time = TimeInfo(self.inputs)
 
     def close(self):
         self.inputs.close()
         self.results.close()
+
+
+@dataclass
+class Run:
+    """Files processed together into one output folder: one result file, or the per-SPORE files of one folder."""
+
+    scenario: str
+    files: list[Path]
 
 
 def find_result_files(paths: list[str | Path]) -> list[Path]:
@@ -51,18 +67,79 @@ class ResultFileError(ValueError):
     """A file that cannot be processed: not a Calliope 0.7 result file, or a model without a solution."""
 
 
-def open_results(path: str | Path) -> ModelResults:
-    path = Path(path)
+def _groups(path: Path) -> tuple[xr.Dataset | None, xr.Dataset]:
     try:
         tree = xr.open_datatree(path)
-        inputs, results = tree["inputs"].to_dataset(), tree["results"].to_dataset()
+        groups = {node.path for node in tree.subtree}
+        results = tree["results"].to_dataset()
     except (KeyError, OSError, ValueError) as err:
         raise ResultFileError(f"{path}: not a Calliope 0.7 result file (needs `inputs` and `results` groups): {err}")
+    inputs = tree["inputs"].to_dataset() if "/inputs" in groups else None
+    return inputs, results
+
+
+def open_results(path: str | Path, inputs: xr.Dataset | None = None) -> ModelResults:
+    """One result file. `inputs`: for per-SPORE files without inputs (Calliope writes them in `spore_0.nc` only)."""
+    path = Path(path)
+    own_inputs, results = _groups(path)
+    if own_inputs is None and inputs is None:
+        raise ResultFileError(f"{path}: not a Calliope 0.7 result file (needs `inputs` and `results` groups)")
+    inputs = own_inputs if own_inputs is not None else inputs
+    if "spores" in inputs.dims:  # per-SPORE files: inputs of spore_0 carry a `spores` dimension of size 1
+        inputs = inputs.isel(spores=0, drop=True)
     if not results.data_vars:
         termination = results.attrs.get("termination_condition")
         detail = f" (termination condition: {termination})" if termination else ""
         raise ResultFileError(f"{path}: no results{detail}: the model was not solved to optimality")
     return ModelResults(path=path, scenario=path.stem, inputs=inputs, results=results)
+
+
+def spore_views(model: ModelResults) -> list[ModelResults]:
+    """One ModelResults per SPORE if the results have a `spores` dimension (sharing inputs and time), else [model]."""
+    if "spores" not in model.results.dims:
+        return [model]
+    return [
+        ModelResults(path=model.path, scenario=model.scenario, inputs=model.inputs,
+                     results=model.results.sel(spores=s, drop=True), spore=int(s), time=model.time)
+        for s in model.results["spores"].values
+    ]
+
+
+def group_runs(files: list[Path]) -> list[Run]:
+    """Per-SPORE files (`spore_<n>.nc`) of one folder form one run named after the folder; other files are runs."""
+    runs: dict[str, Run] = {}
+    for f in files:
+        if SPORE_FILE.match(f.stem):
+            key = str(f.parent)
+            runs.setdefault(key, Run(scenario=f.parent.name, files=[])).files.append(f)
+        else:
+            runs[str(f)] = Run(scenario=f.stem, files=[f])
+    for run in runs.values():
+        run.files.sort(key=lambda f: int(SPORE_FILE.match(f.stem).group(1)) if SPORE_FILE.match(f.stem) else -1)
+    return list(runs.values())
+
+
+def open_run(run: Run) -> list[ModelResults]:
+    """The models (one per SPORE for SPORES runs) of a run."""
+    if len(run.files) == 1 and not SPORE_FILE.match(run.files[0].stem):
+        return spore_views(open_results(run.files[0]))
+    # per-SPORE files: the inputs are in spore_0.nc of the same folder (also when only some SPOREs are given)
+    folder = run.files[0].parent
+    inputs = None
+    for candidate in [folder / "spore_0.nc", *run.files]:
+        if candidate.exists():
+            own_inputs, _ = _groups(candidate)
+            if own_inputs is not None:
+                inputs = own_inputs
+                break
+    if inputs is None:
+        raise ResultFileError(f"{folder}: per-SPORE files without inputs (Calliope writes them in spore_0.nc)")
+    views = []
+    for f in run.files:
+        model = open_results(f, inputs=inputs)
+        model.scenario = run.scenario
+        views.extend(spore_views(model))
+    return views
 
 
 def to_long(da: xr.DataArray, zero_threshold: float = 0.0, chunk_size: float = 2e8, techs=None) -> pd.Series:

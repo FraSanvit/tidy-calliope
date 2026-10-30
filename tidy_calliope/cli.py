@@ -34,12 +34,16 @@ def main(argv=None) -> int:
 
     from tidy_calliope.core import process  # after logging setup
 
-    try:
-        summaries = process(args.results, args.output_dir, args.config, checks=not args.no_checks,
-                            skip_unprocessable=True)
+    from tidy_calliope.config import load_config
+    from tidy_calliope.reader import find_result_files
+
+    try:  # only user errors are reported in one line; anything else keeps its traceback
+        cfg = load_config(args.config)
+        files = find_result_files(args.results)
     except (FileNotFoundError, KeyError) as err:  # no input files; unknown configuration keys
         print(f"ERROR: {err.args[0] if err.args else err}", file=sys.stderr)
         return 2
+    summaries = process(files, args.output_dir, cfg, checks=not args.no_checks, skip_unprocessable=True)
 
     processed = [s for s in summaries if "skipped" not in s]
     skipped = [s for s in summaries if "skipped" in s]

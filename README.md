@@ -111,6 +111,18 @@ Transmission links (one tech per link in Calliope 0.7) are only in the transmiss
   within the representative day).
 - Calliope's `cost_operation_variable` already includes the timestep weights: it is summed without weights.
 
+## SPORES
+
+SPORES runs (Calliope `config.init.mode: spores`) are processed in both of Calliope's file formats:
+
+- **one file** (`model.to_netcdf` after a SPORES solve): the results have a `spores` dimension;
+- **one file per SPORE** (`config.solve.spores.save_per_spore_path`): `spore_0.nc`, `spore_1.nc`, ... in one
+  folder. Only `spore_0.nc` has the inputs; they are used for every SPORE of the folder, also when a single
+  `spore_<n>.nc` is given. The folder is one run, named after the folder (e.g. `max_battery`).
+
+Each SPORE is processed on its own (time rebuilding, transmission, checks), and every table gets a `spores`
+column after `scenario` (0 = the cost-optimal solution).
+
 ## Shadow prices
 
 Written when the model was solved with `config.solve.shadow_prices` (e.g. `[system_balance, ...]`) and
@@ -132,7 +144,7 @@ Written to `metadata.json` (`checks`, `checks_failed`); `--strict` makes a faile
 
 | Check | |
 |---|---|
-| `timestep_weights`, `hours_in_year` | the rebuilt year has the model's weights and 8760 (8784) hours |
+| `timestep_weights`, `hours_in_period` | the rebuilt time axis has the model's weights and covers the modelled period (`full_year`: 8760/8784 h) |
 | `*_adds_up_to_*` | monthly and hourly tables add up to the annual ones |
 | `demand_met` | inflow of demand techs = `sink_use_equals`, both over the real year |
 | `costs_sum_to_objective` | the techs' costs (weighted by cost class) = the objective |
@@ -140,6 +152,9 @@ Written to `metadata.json` (`checks`, `checks_failed`); `--strict` makes a faile
 | `net_import_antisymmetric` | import of A from B = - import of B from A |
 | `storage_level_within_bounds` | rebuilt storage level within [0, `storage_cap`] |
 | `shadow_price_timesteps` | one price per hour of the (rebuilt) year for every node and carrier |
+| `spores_cost_within_slack` | SPORES: every SPORE costs at most (1 + `spores_slack`) x the cost-optimal one |
+
+For SPORES runs the checks are run per SPORE (`checks` has one entry per `spores=<n>`).
 
 ## Development
 

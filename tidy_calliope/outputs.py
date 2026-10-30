@@ -181,7 +181,8 @@ class Processor:
                 if var not in inputs or "costs" not in inputs[var].dims or cost_class not in inputs[var]["costs"].values:
                     continue
                 da = inputs[var].sel(costs=cost_class)
-                da = da.sel(techs=[t for t in da.indexes["techs"] if t in set(self.non_transmission)])
+                if "techs" in da.dims:  # model-wide parameters (no techs, e.g. cost_interest_rate) are kept as is
+                    da = da.sel(techs=[t for t in da.indexes["techs"] if t in set(self.non_transmission)])
                 if var in ("cost_om_annual_investment_fraction", "cost_interest_rate"):
                     unit, scale = ("fraction_of_total_investment" if "fraction" in var else "fraction"), 1.0
                 elif var == "cost_om_annual":
@@ -190,6 +191,11 @@ class Processor:
                     unit, scale = f"{spec['unit']}_per_{power}", per_unit
                 else:
                     unit, scale = f"{spec['unit']}_per_{energy}", per_unit
+                if not da.dims:  # model-wide parameter: one value, reported with its unit only
+                    value = float(da.values)
+                    if not np.isnan(value):
+                        out[name] = pd.Series([value * scale], index=pd.Index([unit], name="unit"))
+                    continue
                 # tech-level parameters (no `nodes` dimension) are reported without a region
                 relabelled = self.naming.relabel(to_long(da, 0.0), how="mean", unit=unit, scale=scale)
                 if not relabelled.empty:

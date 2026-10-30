@@ -22,7 +22,7 @@ EXPORT = 0.5  # sent from A_1 to B_1 per hour
 
 def price(node: str, timesteps: pd.DatetimeIndex) -> np.ndarray:
     """Electricity price per model timestep (model units): the solver's dual divided by the timestep weights."""
-    day = timesteps.dayofyear.values - 1  # differs between the typical days of the clustered file
+    day = timesteps.day_of_year.values - 1  # differs between the typical days of the clustered file
     return (0.002 + 0.001 * timesteps.hour.values / 24 + 0.0005 * day) * (1 if node == "A_1" else 2)
 
 
@@ -155,6 +155,51 @@ def unsolved_file(tmp_path_factory) -> str:
     tree = xr.DataTree.from_dict({"inputs": tree["inputs"].to_dataset(), "results": xr.Dataset()})
     path = tmp_path_factory.mktemp("results") / "unsolved.nc"
     tree.to_netcdf(path)
+    return str(path)
+
+
+def _spores_model(cost_factor: float = 1.2) -> tuple[xr.Dataset, xr.Dataset]:
+    """SPORES results as Calliope 0.7 stores them: a `spores` dimension (0 = cost-optimal). SPORE 1 has the same
+    flows, a different PV capacity and costs x `cost_factor`; `spores_slack` is 0.5."""
+    timesteps = pd.date_range("2018-01-01", periods=12, freq="730h")
+    tree = make_model(timesteps, np.full(12, 730.0), np.ones(12), np.linspace(1.0, 2.0, 12))
+    inputs, base = tree["inputs"].to_dataset(), tree["results"].to_dataset()
+    inputs["spores_slack"] = ((), 0.5)
+    spore = base.copy(deep=True)
+    for var in ["cost", "cost_investment_annualised", "cost_operation_fixed", "cost_operation_variable",
+                "min_cost_optimisation"]:
+        spore[var] = spore[var] * cost_factor
+    spore["flow_cap"] = spore["flow_cap"].where(spore["techs"] != "pv", spore["flow_cap"] * 2)
+    results = xr.concat([base, spore], dim=pd.Index([0, 1], name="spores"), data_vars="all")
+    return inputs, results
+
+
+@pytest.fixture(scope="session")
+def spores_file(tmp_path_factory) -> str:
+    inputs, results = _spores_model()
+    path = tmp_path_factory.mktemp("results") / "spores-run.nc"
+    xr.DataTree.from_dict({"inputs": inputs, "results": results}).to_netcdf(path)
+    return str(path)
+
+
+@pytest.fixture(scope="session")
+def per_spore_dir(tmp_path_factory) -> str:
+    """Calliope's `save_per_spore_path` layout: spore_0.nc with inputs (with a `spores` dimension), spore_1.nc without."""
+    inputs, results = _spores_model()
+    folder = tmp_path_factory.mktemp("results") / "max_pv"
+    folder.mkdir()
+    inputs0 = inputs.copy()
+    inputs0["objective_cost_weights"] = inputs0["objective_cost_weights"].expand_dims(spores=[0])
+    xr.DataTree.from_dict({"results": results.sel(spores=[0]), "inputs": inputs0}).to_netcdf(folder / "spore_0.nc")
+    xr.DataTree.from_dict({"results": results.sel(spores=[1])}).to_netcdf(folder / "spore_1.nc")
+    return str(folder)
+
+
+@pytest.fixture(scope="session")
+def spores_over_slack_file(tmp_path_factory) -> str:
+    inputs, results = _spores_model(cost_factor=1.6)  # above (1 + 0.5) x the cost-optimal cost
+    path = tmp_path_factory.mktemp("results") / "spores-over-slack.nc"
+    xr.DataTree.from_dict({"inputs": inputs, "results": results}).to_netcdf(path)
     return str(path)
 
 
