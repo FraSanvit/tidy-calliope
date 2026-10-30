@@ -25,6 +25,10 @@ python -m tidy_calliope results/2030-1x-test-1h-24d.nc     # same, as a module
 tidy-calliope --show-config                                 # all settings, with comments
 ```
 
+Files without a solution (a model not solved to optimality is saved with empty results) are skipped with a one-line
+message; the other files are still processed, and the exit code is 1. Exit code 2: no input files or a configuration
+error.
+
 From Python:
 
 ```python

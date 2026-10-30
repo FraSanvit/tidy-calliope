@@ -13,7 +13,7 @@ from tidy_calliope import __version__
 from tidy_calliope.checks import run_checks
 from tidy_calliope.config import load_config
 from tidy_calliope.outputs import Processor
-from tidy_calliope.reader import find_result_files, open_results
+from tidy_calliope.reader import ResultFileError, find_result_files, open_results
 
 LOGGER = logging.getLogger("tidy_calliope")
 
@@ -129,9 +129,22 @@ def process_file(path: str | Path, output_dir: str | Path, config: str | Path | 
 
 
 def process(paths, output_dir: str | Path = "tidy-results", config: str | Path | dict | None = None,
-            checks: bool = True) -> list[dict]:
-    """Process result files: `paths` can mix .nc files, folders (all .nc inside) and glob patterns."""
+            checks: bool = True, skip_unprocessable: bool = False) -> list[dict]:
+    """Process result files: `paths` can mix .nc files, folders (all .nc inside) and glob patterns.
+
+    With `skip_unprocessable`, a file that is not a result file or has no solution (`ResultFileError`) is skipped
+    instead of stopping the run: its summary is `{"source": ..., "skipped": <reason>}`, and nothing is written for it.
+    """
     cfg = load_config(config)
     if isinstance(paths, (str, Path)):
         paths = [paths]
-    return [process_file(f, output_dir, checks=checks, loaded_config=cfg) for f in find_result_files(paths)]
+    summaries = []
+    for f in find_result_files(paths):
+        try:
+            summaries.append(process_file(f, output_dir, checks=checks, loaded_config=cfg))
+        except ResultFileError as err:
+            if not skip_unprocessable:
+                raise
+            LOGGER.info(f"skipped {err}")
+            summaries.append({"source": str(f), "skipped": str(err)})
+    return summaries

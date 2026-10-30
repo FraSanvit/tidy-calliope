@@ -34,14 +34,26 @@ def main(argv=None) -> int:
 
     from tidy_calliope.core import process  # after logging setup
 
-    summaries = process(args.results, args.output_dir, args.config, checks=not args.no_checks)
-    failed = {s["scenario"]: s.get("checks_failed", []) for s in summaries if s.get("checks_failed")}
-    for s in summaries:
+    try:
+        summaries = process(args.results, args.output_dir, args.config, checks=not args.no_checks,
+                            skip_unprocessable=True)
+    except (FileNotFoundError, KeyError) as err:  # no input files; unknown configuration keys
+        print(f"ERROR: {err.args[0] if err.args else err}", file=sys.stderr)
+        return 2
+
+    processed = [s for s in summaries if "skipped" not in s]
+    skipped = [s for s in summaries if "skipped" in s]
+    for s in processed:
         print(f"{s['scenario']}: {len(s['tables'])} tables in {s['runtime_seconds']} s -> {args.output_dir}/{s['scenario']}")
+    for s in skipped:
+        print(f"SKIPPED {s['skipped']}", file=sys.stderr)
+    failed = {s["scenario"]: s.get("checks_failed", []) for s in processed if s.get("checks_failed")}
     if failed:
         print("Failed checks: " + json.dumps(failed), file=sys.stderr)
-        return 1 if args.strict else 0
-    return 0
+    if skipped:
+        print(f"{len(processed)} of {len(summaries)} files processed, {len(skipped)} skipped", file=sys.stderr)
+        return 1
+    return 1 if failed and args.strict else 0
 
 
 if __name__ == "__main__":

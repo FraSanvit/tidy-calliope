@@ -47,15 +47,21 @@ def find_result_files(paths: list[str | Path]) -> list[Path]:
     return unique
 
 
+class ResultFileError(ValueError):
+    """A file that cannot be processed: not a Calliope 0.7 result file, or a model without a solution."""
+
+
 def open_results(path: str | Path) -> ModelResults:
     path = Path(path)
     try:
         tree = xr.open_datatree(path)
         inputs, results = tree["inputs"].to_dataset(), tree["results"].to_dataset()
     except (KeyError, OSError, ValueError) as err:
-        raise ValueError(f"{path} is not a Calliope 0.7 result file (needs `inputs` and `results` groups): {err}")
+        raise ResultFileError(f"{path}: not a Calliope 0.7 result file (needs `inputs` and `results` groups): {err}")
     if not results.data_vars:
-        raise ValueError(f"{path} has no results (was the model solved to optimality?)")
+        termination = results.attrs.get("termination_condition")
+        detail = f" (termination condition: {termination})" if termination else ""
+        raise ResultFileError(f"{path}: no results{detail}: the model was not solved to optimality")
     return ModelResults(path=path, scenario=path.stem, inputs=inputs, results=results)
 
 

@@ -138,6 +138,17 @@ def clustered_file(tmp_path_factory) -> str:
 
 
 @pytest.fixture(scope="session")
+def unsolved_file(tmp_path_factory) -> str:
+    """As Calliope saves a model that was not solved to optimality: inputs, but an empty `results` group."""
+    timesteps = pd.date_range("2018-01-01", periods=12, freq="730h")
+    tree = make_model(timesteps, np.full(12, 730.0), np.ones(12), np.ones(12))
+    tree = xr.DataTree.from_dict({"inputs": tree["inputs"].to_dataset(), "results": xr.Dataset()})
+    path = tmp_path_factory.mktemp("results") / "unsolved.nc"
+    tree.to_netcdf(path)
+    return str(path)
+
+
+@pytest.fixture(scope="session")
 def resampled_file(tmp_path_factory) -> str:
     """12 timesteps of 730 h (as `res_730h`), not clustered."""
     timesteps = pd.date_range("2018-01-01", periods=12, freq="730h")

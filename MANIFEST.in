@@ -1,3 +1,3 @@
-include LICENSE README.md environment.yml tidy-calliope.def
+include LICENSE README.md CHANGELOG.md environment.yml tidy-calliope.def
 recursive-include tests *.py
 recursive-include examples *

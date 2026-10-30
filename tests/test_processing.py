@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tidy_calliope import load_config, process
+from tidy_calliope import ResultFileError, load_config, process
 from tidy_calliope.cli import main
 from tidy_calliope.reader import open_results
 
@@ -119,3 +119,24 @@ def test_config_rejects_typos():
 def test_cli(resampled_file, tmp_path):
     assert main([resampled_file, "-o", str(tmp_path), "-q", "--strict"]) == 0
     assert (tmp_path / "resampled-730h" / "nameplate_capacity.csv").exists()
+
+
+def test_unsolved_file_raises(unsolved_file, tmp_path):
+    with pytest.raises(ResultFileError, match="not solved to optimality"):
+        process(unsolved_file, tmp_path)
+    assert not (tmp_path / "unsolved").exists()
+
+
+def test_cli_skips_unsolved_file(unsolved_file, resampled_file, tmp_path, capsys):
+    """An unsolved file is reported in one line and skipped; the other files are still processed."""
+    assert main([unsolved_file, resampled_file, "-o", str(tmp_path), "-q"]) == 1
+    err = capsys.readouterr().err
+    assert "SKIPPED" in err and "unsolved.nc" in err and "Traceback" not in err
+    assert "1 of 2 files processed, 1 skipped" in err
+    assert (tmp_path / "resampled-730h" / "nameplate_capacity.csv").exists()
+    assert not (tmp_path / "unsolved").exists()
+
+
+def test_cli_missing_path(tmp_path, capsys):
+    assert main([str(tmp_path / "nothing-here.nc"), "-o", str(tmp_path), "-q"]) == 2
+    assert capsys.readouterr().err.startswith("ERROR: ")
