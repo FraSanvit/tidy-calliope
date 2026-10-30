@@ -313,3 +313,65 @@ class Processor:
     def names(self) -> dict:
         names = self.naming.tech_names(self.model.inputs)
         return {"names": names} if not names.empty else {}
+
+    # ------------------------------------------------------------------ shadow prices
+    def objective_unit(self) -> tuple[str, float]:
+        """(unit label, scale) of the objective: the cost class with a non-zero objective weight, if only one."""
+        inputs = self.model.inputs
+        if "objective_cost_weights" in inputs:
+            weights = inputs["objective_cost_weights"].to_series()
+            classes = [str(c) for c, w in weights.items() if w != 0]
+        else:
+            classes = [str(c) for c in self.model.results["costs"].values] if "costs" in self.model.results.coords else []
+        if len(classes) == 1 and classes[0] in self.cfg["cost_classes"]:
+            spec = self.cfg["cost_classes"][classes[0]]
+            return spec["unit"], float(spec.get("scale", self.cfg["units"]["cost"]["scale"]))
+        return "objective_unit", 1.0
+
+    def shadow_prices(self) -> dict:
+        """Energy balance prices per node, carrier and timestep, and the other tracked shadow prices.
+
+        Calliope weights each model timestep in the objective by `timestep_weights` (the real days a typical day
+        stands for), so its dual of the balance is weight x price: it is divided by the weights. For clustered runs
+        the prices of the typical days are then repeated for every real day they stand for (`shadow_prices.full_year`).
+        Prices are per unit of energy of the carrier (model carrier names: carriers are not merged, prices cannot be
+        summed) and use the nodes of the model (regions are not aggregated).
+        """
+        results = self.model.results
+        out = {}
+        if "shadow_price_system_balance" in results:
+            long = to_long(results["shadow_price_system_balance"], 0.0)  # zero prices are kept
+            if not long.empty:
+                wide = long.unstack("timesteps")
+                wide = wide.div(self.time.model_weights.reindex(wide.columns).values, axis=1)
+                if self.cfg["shadow_prices"]["full_year"]:
+                    wide = self.time.to_real_time(wide)
+                cost_unit, cost_scale = self.objective_unit()
+                df = wide.stack().rename("value").reset_index()
+                units = {c: self.naming.energy_unit(self.naming.carrier.get(str(c), str(c))) for c in df["carriers"].unique()}
+                df["unit"] = df["carriers"].map(lambda c: f"{cost_unit}_per_{units[c][0]}")
+                df["value"] *= df["carriers"].map(lambda c: cost_scale / units[c][1])
+                out["shadow_price_system_balance"] = df.set_index(["nodes", "carriers", "unit", "timesteps"])["value"]
+
+        others = []
+        for var in sorted(v for v in results.data_vars if v.startswith("shadow_price_") and v != "shadow_price_system_balance"):
+            da = results[var]
+            if "timesteps" in da.dims:  # per-timestep constraint: price = dual / weight, as for the balance
+                da = da / xr.DataArray(self.time.model_weights.values, coords={"timesteps": da["timesteps"].values},
+                                       dims="timesteps")
+            if not da.dims:  # one value for the whole constraint
+                value = float(da.values)
+                if np.isnan(value):
+                    continue
+                s, index = pd.Series([value]), [""]
+            else:
+                s = to_long(da, 0.0)
+                if s.empty:
+                    continue
+                index = [", ".join(f"{d}={v}" for d, v in zip(s.index.names, i if isinstance(i, tuple) else (i,)))
+                         for i in s.index]
+            others.append(pd.DataFrame({"constraint": var.removeprefix("shadow_price_"), "index": index,
+                                        "value": s.values}))
+        if others:
+            out["shadow_price_constraints"] = pd.concat(others).set_index(["constraint", "index"])["value"]
+        return out

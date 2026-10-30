@@ -12,6 +12,13 @@ outputs:
   input_costs: true            # cost_per_nameplate_capacity, cost_per_flow_out, ... (model inputs)
   transmission: true           # net_transfer_capacity, net_import_* (+ hourly net_import if `hourly`), transmission costs
   primary_energy_supply: true  # primary_energy_supply (needs `annual` flows and `transmission`)
+  shadow_prices: false         # shadow_price_system_balance (per node, carrier, timestep) and shadow_price_constraints
+                               # (other tracked constraints, e.g. CO2 caps). Needs `config.solve.shadow_prices` in the model.
+
+# Shadow prices (`outputs.shadow_prices`). The balance prices are divided by the timestep weights (Calliope's dual is
+# weight x price), in objective cost units per unit of energy of the carrier (e.g. billion_2015eur_per_twh).
+shadow_prices:
+  full_year: true              # clustered runs: one row per real hour (typical days repeated); false: per model timestep
 
 # File format: csv | parquet (parquet needs pyarrow). Hourly tables can be large: parquet is much faster.
 format: csv

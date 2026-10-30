@@ -47,6 +47,8 @@ def compute_tables(model, cfg: dict) -> tuple[Processor, dict]:
     if need_transmission:
         _add("transmission", lambda: proc.transmission(annual=need_annual, monthly=out["monthly"] and out["transmission"],
                                                hourly=out["hourly"] and out["transmission"]))
+    if out["shadow_prices"]:
+        _add("shadow prices", lambda: proc.shadow_prices())
     if out["primary_energy_supply"]:
         _add("primary energy supply", lambda: proc.primary_energy_supply(
             tables.get("flow_out_sum"), tables.get("flow_in_sum"), tables.get("net_import_sum")))
@@ -61,13 +63,14 @@ def compute_tables(model, cfg: dict) -> tuple[Processor, dict]:
 
 
 def write_table(series: pd.Series, name: str, folder: Path, scenario: str, scenario_dim: str, fmt: str,
-                wide: bool = False) -> Path:
+                wide: bool = False, value_name: str | None = None) -> Path:
+    """One table to file; the value column is named after the table, or `value_name`."""
     if wide:  # one column per timestep
         df = series.unstack("timesteps")
         df.columns = [str(c) for c in df.columns]
         df = df.reset_index()
     else:
-        df = series.rename(name).reset_index()
+        df = series.rename(value_name or name).reset_index()
     df.insert(0, scenario_dim, scenario)
     if fmt == "parquet":
         path = folder / f"{name}.parquet"
@@ -94,13 +97,15 @@ def process_file(path: str | Path, output_dir: str | Path, config: str | Path | 
     LOGGER.info(f"{model.scenario}: {path} -> {folder} ({model.time.describe()})")
 
     proc, tables = compute_tables(model, cfg)
-    hourly_tables = {"flow_out", "flow_in", "storage_level", "net_import"}
+    hourly_tables = {"flow_out", "flow_in", "storage_level", "net_import", "shadow_price_system_balance"}
+    value_column = {"shadow_price_system_balance": "value", "shadow_price_constraints": "value"}
     written = {}
     for name, series in tables.items():
         hourly = name in hourly_tables
         fmt = cfg["hourly_format"] if hourly else cfg["format"]
         wide = hourly and cfg["hourly_layout"] == "wide"
-        p = write_table(series, name, folder, model.scenario, cfg["scenario_dim_name"], fmt, wide=wide)
+        p = write_table(series, name, folder, model.scenario, cfg["scenario_dim_name"], fmt, wide=wide,
+                        value_name=value_column.get(name))
         written[name] = {"file": p.name, "rows": int(len(series))}
 
     summary = {

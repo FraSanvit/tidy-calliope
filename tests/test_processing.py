@@ -8,9 +8,9 @@ from tidy_calliope import ResultFileError, load_config, process
 from tidy_calliope.cli import main
 from tidy_calliope.reader import open_results
 
-from conftest import DEMAND, EXPORT, LINK, _daily_shape
+from conftest import DEMAND, EXPORT, LINK, _daily_shape, price
 
-HOURLY = {"outputs": {"hourly": True}}
+HOURLY = {"outputs": {"hourly": True, "shadow_prices": True}}
 
 
 def _read(folder, name):
@@ -135,6 +135,46 @@ def test_cli_skips_unsolved_file(unsolved_file, resampled_file, tmp_path, capsys
     assert "1 of 2 files processed, 1 skipped" in err
     assert (tmp_path / "resampled-730h" / "nameplate_capacity.csv").exists()
     assert not (tmp_path / "unsolved").exists()
+
+
+def test_shadow_prices_clustered_full_year(clustered_out):
+    """Prices are divided by the timestep weights and repeated for every real day of each typical day."""
+    folder, summary = clustered_out
+    sp = _read(folder, "shadow_price_system_balance")
+    assert list(sp.columns) == ["scenario", "nodes", "carriers", "unit", "timesteps", "value"]
+    assert set(sp["unit"]) == {"billion_2015eur_per_twh"}
+    a = sp[sp.nodes == "A_1"].set_index("timesteps")["value"]
+    assert len(a) == 8760
+    # real day d stands for typical day d % 2, i.e. model timesteps on 2018-01-01 (day 0) or 2018-01-02 (day 1)
+    real = pd.to_datetime(a.index)
+    typical = pd.Timestamp("2018-01-01") + pd.to_timedelta((real.dayofyear - 1) % 2, unit="D") + pd.to_timedelta(real.hour, unit="h")
+    expected = price("A_1", pd.DatetimeIndex(typical)) / 0.1  # weights removed; cost scale 1, energy scale 0.1
+    assert np.allclose(a.values, expected)
+    assert a.iloc[0] != a.iloc[24]  # 1 and 2 January come from different typical days
+    assert summary["checks"]["shadow_price_timesteps"]["ok"]
+
+
+def test_shadow_prices_per_model_timestep(clustered_file, tmp_path):
+    (summary,) = process(clustered_file, tmp_path, {"outputs": {"shadow_prices": True},
+                                                    "shadow_prices": {"full_year": False}})
+    sp = pd.read_csv(tmp_path / summary["scenario"] / "shadow_price_system_balance.csv")
+    assert len(sp[sp.nodes == "B_1"]) == 48  # 2 typical days x 24 h
+    assert summary["checks_failed"] == []
+
+
+def test_shadow_prices_resampled_and_constraints(resampled_out):
+    folder, _ = resampled_out
+    sp = _read(folder, "shadow_price_system_balance")
+    b = sp[sp.nodes == "B_1"]["value"].values
+    hours = pd.date_range("2018-01-01", periods=12, freq="730h")
+    assert len(b) == 12 and np.allclose(b, price("B_1", hours) / 0.1)  # weights 1: no correction
+    other = _read(folder, "shadow_price_constraints")
+    assert other.loc[0, ["constraint", "index", "value"]].tolist() == ["group_co2_cap", "costs=monetary", -0.5]
+
+
+def test_shadow_prices_off_by_default(resampled_file, tmp_path):
+    (summary,) = process(resampled_file, tmp_path)
+    assert "shadow_price_system_balance" not in summary["tables"]
 
 
 def test_cli_missing_path(tmp_path, capsys):

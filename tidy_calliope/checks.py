@@ -84,6 +84,14 @@ def run_checks(proc: Processor, tables: dict) -> dict:
         checks["net_import_antisymmetric"] = {"ok": abs(float(s.sum())) < 1e-6 * max(float(s.abs().sum()), 1.0),
                                               "sum_over_all_pairs": float(s.sum())}
 
+    # shadow prices: one price per real (or model) timestep for every node and carrier
+    if "shadow_price_system_balance" in tables:
+        s = tables["shadow_price_system_balance"]
+        expected = len(time.expansion) if proc.cfg["shadow_prices"]["full_year"] else len(time.timesteps)
+        counts = s.groupby(level=["nodes", "carriers"]).size()
+        checks["shadow_price_timesteps"] = {"ok": bool((counts == expected).all()), "expected_per_node_carrier": expected,
+                                            "min": int(counts.min()), "max": int(counts.max())}
+
     # storage rebuilt over the real year stays within [0, storage_cap]
     bounds = getattr(proc, "storage_bounds", None)
     if bounds is not None:

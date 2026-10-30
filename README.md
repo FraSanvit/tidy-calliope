@@ -63,6 +63,8 @@ A YAML file with only the settings to change; it is merged on top of `tidy_calli
 |---|---|---|
 | `outputs.names` / `capacities` / `annual` / `monthly` / `costs` / `input_costs` / `transmission` / `primary_energy_supply` | `true` | which tables to write |
 | `outputs.hourly` | `false` | hourly flows, storage level and net imports |
+| `outputs.shadow_prices` | `false` | energy balance prices and other shadow prices (see below) |
+| `shadow_prices.full_year` | `true` | clustered runs: prices for every real hour; `false`: per model timestep |
 | `format`, `hourly_format` | `csv` | `csv` or `parquet` (needs pyarrow) |
 | `hourly_layout` | `long` | `wide`: one column per timestep (much smaller for full-year hourly data) |
 | `regions` | `subcountries` | `subcountries` (model nodes), `countries` (node prefix before `_`) or `{node: region}` |
@@ -92,6 +94,8 @@ All tables have the columns `scenario`, the table's dimensions, `unit` and a val
 | `net_import_sum`, `net_import_max`, `*_1M`, `net_import` | exporting_region, importing_region, carriers, unit[, month / timesteps] | import into `importing_region` minus export to it |
 | `total_transmission_costs` | techs, exporting_region, importing_region, unit | per link direction as defined in the model |
 | `primary_energy_supply` | locs, carriers (category), unit | annual |
+| `shadow_price_system_balance` | nodes, carriers, unit, timesteps, `value` | price of energy (`outputs.shadow_prices`) |
+| `shadow_price_constraints` | constraint, index, `value` | other tracked shadow prices, e.g. CO2 caps (raw) |
 
 Transmission links (one tech per link in Calliope 0.7) are only in the transmission tables; links within one region
 (e.g. with `regions: countries`) are left out.
@@ -107,6 +111,21 @@ Transmission links (one tech per link in Calliope 0.7) are only in the transmiss
   within the representative day).
 - Calliope's `cost_operation_variable` already includes the timestep weights: it is summed without weights.
 
+## Shadow prices
+
+Written when the model was solved with `config.solve.shadow_prices` (e.g. `[system_balance, ...]`) and
+`outputs.shadow_prices: true`.
+
+- `shadow_price_system_balance`: the price of energy per node, carrier and timestep. Calliope weights each model
+  timestep in the objective by `timestep_weights`, so its dual is weight x price: it is divided by the weights (for
+  non-clustered runs the weights are 1). For clustered runs the prices of each typical day are then repeated for
+  every real day it stands for (8760 h); `shadow_prices.full_year: false` keeps one row per model timestep.
+  Unit: objective cost unit per unit of energy of the carrier (e.g. `billion_2015eur_per_twh`; x 1000 = EUR/MWh).
+  Model nodes and carrier names are kept: prices are not summed over regions or merged carriers.
+  Like the hourly tables, it follows `hourly_format` and `hourly_layout`.
+- `shadow_price_constraints`: every other tracked constraint (e.g. `group_systemwide_co2_max_*`), as stored by
+  Calliope (no unit conversion). Annual constraints such as CO2 caps need no weight correction.
+
 ## Checks
 
 Written to `metadata.json` (`checks`, `checks_failed`); `--strict` makes a failed check an error (exit code 1).
@@ -120,6 +139,7 @@ Written to `metadata.json` (`checks`, `checks_failed`); `--strict` makes a faile
 | `<cost table>_complete` | reported costs + transmission costs = model total (minus dropped techs, listed) |
 | `net_import_antisymmetric` | import of A from B = - import of B from A |
 | `storage_level_within_bounds` | rebuilt storage level within [0, `storage_cap`] |
+| `shadow_price_timesteps` | one price per hour of the (rebuilt) year for every node and carrier |
 
 ## Development
 

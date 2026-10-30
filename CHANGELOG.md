@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 (2026-10-30)
+
+### Added
+
+- Shadow prices (`outputs.shadow_prices: true`, off by default):
+  - `shadow_price_system_balance`: price of energy per node, carrier and timestep (columns `nodes`, `carriers`,
+    `unit`, `timesteps`, `value`). Calliope's dual is weight x price: it is divided by the timestep weights, and for
+    clustered runs the typical-day prices are rebuilt to every real hour of the year
+    (`shadow_prices.full_year: false` keeps the model timesteps). Unit: objective cost unit per energy unit of the
+    carrier, e.g. `billion_2015eur_per_twh`.
+  - `shadow_price_constraints`: the other tracked shadow prices (e.g. CO2 caps), as stored by Calliope.
+- Check `shadow_price_timesteps`: one price per (rebuilt) timestep for every node and carrier.
+
 ## 0.1.1 (2026-10-30)
 
 ### Changed

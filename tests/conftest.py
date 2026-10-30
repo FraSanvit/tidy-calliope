@@ -20,6 +20,12 @@ DEMAND = {"A_1": 1.0, "B_1": 2.0}  # per hour, times the daily shape below
 EXPORT = 0.5  # sent from A_1 to B_1 per hour
 
 
+def price(node: str, timesteps: pd.DatetimeIndex) -> np.ndarray:
+    """Electricity price per model timestep (model units): the solver's dual divided by the timestep weights."""
+    day = timesteps.dayofyear.values - 1  # differs between the typical days of the clustered file
+    return (0.002 + 0.001 * timesteps.hour.values / 24 + 0.0005 * day) * (1 if node == "A_1" else 2)
+
+
 def _daily_shape(day_type: int) -> np.ndarray:
     hours = np.arange(24)
     return 1.0 + 0.5 * np.sin(2 * np.pi * (hours + 6 * day_type) / 24)
@@ -82,6 +88,10 @@ def make_model(timesteps: pd.DatetimeIndex, resolution: np.ndarray, weights: np.
             "cost_operation_fixed": (("nodes", "techs", "costs"), cost_fixed),
             "cost_operation_variable": (("nodes", "techs", "costs", "timesteps"), cost_variable),
             "min_cost_optimisation": ((), float(np.nansum(cost))),
+            # Calliope's dual of the balance is weight x price
+            "shadow_price_system_balance": (("nodes", "carriers", "timesteps"),
+                                            np.stack([price(n, timesteps) * weights for n in NODES])[:, None, :]),
+            "shadow_price_group_co2_cap": (("costs",), np.array([-0.5])),
         },
         coords={k: v for k, v in coords.items()},
     )
