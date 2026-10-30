@@ -1,0 +1,27 @@
+Bootstrap: docker
+From: mambaorg/micromamba:1.5.10
+
+# Apptainer image of tidy-calliope. Build (on a node with internet access):
+#   apptainer build --fakeroot tidy-calliope.sif tidy-calliope.def
+# Run:
+#   apptainer run tidy-calliope.sif results/ -c tidy.yaml -o tidy-results
+
+%files
+    environment.yml /opt/tidy-calliope/environment.yml
+    pyproject.toml /opt/tidy-calliope/pyproject.toml
+    tidy_calliope /opt/tidy-calliope/tidy_calliope
+
+%post
+    micromamba install -y -n base -f /opt/tidy-calliope/environment.yml
+    micromamba clean -a -y
+    /opt/conda/bin/python -m pip install --no-deps --no-cache-dir /opt/tidy-calliope
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+
+%runscript
+    exec /opt/conda/bin/tidy-calliope "$@"
+
+%help
+    tidy-calliope: post-processing of Calliope 0.7 result files (.nc) into tidy tables.
+    Usage: apptainer run tidy-calliope.sif RESULTS... [-c config.yaml] [-o output_dir]

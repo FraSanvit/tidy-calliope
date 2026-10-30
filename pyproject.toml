@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tidy-calliope"
+dynamic = ["version"]
+description = "Post-processing of Calliope 0.7 results (incl. clustered runs) into tidy tables"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Francesco Sanvito", email = "sanvitofrancesco@gmail.com" }]
+requires-python = ">=3.11"
+keywords = ["calliope", "energy system modelling", "post-processing", "time series clustering"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy",
+    "pandas>=2.1",
+    "xarray>=2024.10",  # xarray.open_datatree
+    "netcdf4",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+parquet = ["pyarrow"]
+test = ["pytest"]
+
+[project.scripts]
+tidy-calliope = "tidy_calliope.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/FraSanvit/tidy-calliope"
+Issues = "https://github.com/FraSanvit/tidy-calliope/issues"
+
+[tool.setuptools]
+packages = ["tidy_calliope"]
+
+[tool.setuptools.dynamic]
+version = { attr = "tidy_calliope.__version__" }
+
+[tool.setuptools.package-data]
+tidy_calliope = ["default_config.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]

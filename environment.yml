@@ -1,0 +1,13 @@
+# Minimal environment for tidy-calliope (no Calliope needed: results are read with xarray).
+name: tidy-calliope
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas>=2.1
+  - xarray>=2024.10
+  - netcdf4
+  - pyyaml
+  - pyarrow  # optional: parquet output

@@ -1,0 +1,143 @@
+# tidy-calliope: default configuration.
+# A user config only needs the keys it changes; it is merged on top of this file.
+
+# Tables to write. Each entry switches a group of output files on or off.
+outputs:
+  names: true                  # names.csv: long technology names
+  capacities: true             # nameplate_capacity, storage_capacity
+  annual: true                 # flow_out_sum, flow_in_sum, flow_out_max, flow_in_max
+  monthly: true                # flow_out_sum_1M, flow_in_sum_1M, flow_out_max_1M, flow_in_max_1M
+  hourly: false                # flow_out, flow_in, storage_level (rebuilt to the full year for clustered runs)
+  costs: true                  # total_system_cost, total_investment_cost, ... (per cost class)
+  input_costs: true            # cost_per_nameplate_capacity, cost_per_flow_out, ... (model inputs)
+  transmission: true           # net_transfer_capacity, net_import_* (+ hourly net_import if `hourly`), transmission costs
+  primary_energy_supply: true  # primary_energy_supply (needs `annual` flows and `transmission`)
+
+# File format: csv | parquet (parquet needs pyarrow). Hourly tables can be large: parquet is much faster.
+format: csv
+hourly_format: csv
+# Layout of hourly tables: long (one row per value, as the other tables) or wide (one row per tech/region/carrier,
+# one column per timestep: much smaller files for full-year hourly data).
+hourly_layout: long
+
+# Regions: "subcountries" (model nodes, unchanged), "countries" (node name up to the first "_", e.g. DEU_1 -> DEU),
+# or a mapping {node: region}.
+regions: subcountries
+
+# Scenario name written in the "scenario" column: the file name without extension.
+scenario_dim_name: scenario
+
+# Values with an absolute value at or below this are dropped (barrier-solver noise).
+zero_threshold: 1.0e-10
+
+# Units. Model values are multiplied by `scale` and labelled with `unit`.
+# Flows/storage use the energy unit of their carrier; capacities and maxima use the matching power unit.
+units:
+  energy:
+    scale: 0.1                 # model energy unit (100 GWh) -> TWh
+    default: twh
+    by_carrier:                # regex on the (renamed) carrier -> unit label, or {unit: ..., scale: ...}
+      "transport$": billion_km
+      "^co2$": 100kt           # as in the v0.6 scripts (also scaled by 0.1); check against the model's co2 unit
+  power:                       # label for capacities/maxima, from the energy label
+    twh: tw
+    suffix: _per_hour          # any other energy label gets this suffix (billion_km -> billion_km_per_hour)
+  cost:
+    scale: 1.0
+  # Input cost parameters "per capacity" / "per energy" are rescaled to the output units (x 1 / energy scale).
+  input_cost_per_unit_scale: 10.0
+
+# Cost classes: output table names per class. Classes not listed are skipped.
+cost_classes:
+  monetary:
+    unit: billion_2015eur
+    names:
+      cost: total_system_cost
+      cost_investment_annualised: annualised_investment_cost
+      cost_operation_fixed: fixed_operation_cost
+      cost_operation_variable: variable_operation_cost
+      total_investment: total_investment_cost        # annualised investment + fixed O&M (v0.6 `cost_investment`)
+      transmission_cost: total_transmission_costs    # `cost` of the transmission links, per pair of regions
+    inputs:
+      cost_flow_cap: cost_per_nameplate_capacity
+      cost_storage_cap: cost_per_storage_capacity
+      cost_flow_out: cost_per_flow_out
+      cost_flow_in: cost_per_flow_in
+      cost_source_use: cost_per_source_use
+      cost_om_annual: annual_cost_per_nameplate_capacity
+      cost_om_annual_investment_fraction: annual_cost_per_unit_invested
+      cost_interest_rate: interest_rate
+  co2:
+    unit: MtCO2
+    names:
+      cost: total_system_emissions
+      cost_investment_annualised: annualised_investment_emissions
+      cost_operation_fixed: fixed_operation_emissions
+      cost_operation_variable: variable_operation_emissions
+      total_investment: total_investment_emissions
+      transmission_cost: total_transmission_emissions
+    inputs:
+      cost_flow_cap: emissions_per_nameplate_capacity
+      cost_storage_cap: emissions_per_storage_capacity
+      cost_flow_out: emissions_per_flow_out
+      cost_flow_in: emissions_per_flow_in
+      cost_source_use: emissions_per_source_use
+
+# Technologies (applied in this order: drop, then rename; regex, matched on the model name).
+techs:
+  drop:                        # model artefacts, never reported
+    - "_converter$"
+    - "^slack_generator$"
+  rename:                      # regex -> replacement; techs with the same new name are summed
+    "^wind_onshore_.*": wind_onshore
+    "^.*_heat_storage_(small|big)$": heat_storage_\1
+  # Not reported as capacities (demands, exports); regex on the renamed tech.
+  exclude_from_capacities:
+    - "^demand_(?!co2$)"
+    - "_distribution_export$"
+
+# Carriers (regex -> replacement, applied to all tables).
+carriers:
+  rename:
+    "^.*_heat$": heat
+    "^syn_(diesel|kerosene|methane|methanol)$": \1
+
+# Transmission links (base_tech: transmission; one tech per link in Calliope 0.7).
+# The link type is the tech name without "<from>_to_<to>_", then renamed with these regexes.
+transmission:
+  rename:
+    "^ac_.*": ac_transmission
+    "^dc_.*": dc_transmission
+
+# Primary energy supply: annual output of these techs (renamed names) grouped into categories,
+# minus the synthetic-fuel exports, plus net electricity imports.
+primary_energy_supply:
+  producers:
+    waste_supply: Waste
+    biofuel_supply: Biofuels
+    hydro_reservoir: Renewable electricity
+    hydro_run_of_river: Renewable electricity
+    nuclear: Nuclear electricity
+    open_field_pv: Renewable electricity
+    roof_mounted_pv: Renewable electricity
+    wind_offshore: Renewable electricity
+    wind_onshore: Renewable electricity
+    methane_supply: Natural gas
+    diesel_supply: Oil
+    kerosene_supply: Oil
+    methanol_supply: Oil
+    coal_supply: Coal
+    syn_diesel_distribution_import: Oil, carbon-neutral net imports
+    syn_kerosene_distribution_import: Oil, carbon-neutral net imports
+    syn_methane_distribution_import: Natural gas, carbon-neutral net imports
+    syn_methanol_distribution_import: Oil, carbon-neutral net imports
+  exports:
+    syn_diesel_distribution_export: Oil, carbon-neutral net imports
+    syn_kerosene_distribution_export: Oil, carbon-neutral net imports
+    syn_methane_distribution_export: Natural gas, carbon-neutral net imports
+    syn_methanol_distribution_export: Oil, carbon-neutral net imports
+  net_import_carriers:
+    electricity: Net electricity import
+
+# Memory: variables with a time dimension are read in chunks of techs of about this many values.
+read_chunk_size: 200000000

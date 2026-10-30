@@ -1,0 +1,7 @@
+# Example user configuration: only the settings that differ from the defaults
+# (`tidy-calliope --show-config` prints all of them, with comments).
+outputs:
+  hourly: true          # full-year hourly flows, storage level and net imports (rebuilt for clustered runs)
+  monthly: true
+hourly_layout: wide     # one column per hour: much smaller files than the long layout
+regions: subcountries   # or: countries
