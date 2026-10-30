@@ -172,7 +172,7 @@ def process_run(run: Run, output_dir: str | Path, cfg: dict, checks: bool = True
     summary["runtime_seconds"] = round(time.time() - t0, 1)
     with open(folder / "metadata.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
-    for model in {id(m.results): m for m in models}.values():
+    for model in models:  # views of one file share its handles: closed once
         model.close()
     return summary
 

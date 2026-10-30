@@ -39,11 +39,14 @@ def test_all_checks_pass(which, request):
 
 
 def test_time_info(clustered_file, resampled_file):
-    clustered = open_results(clustered_file).time
+    model = open_results(clustered_file)
+    clustered = model.time
     assert clustered.clustered and clustered.describe()["typical_days"] == 2
     assert len(clustered.expansion) == 8760
-    resampled = open_results(resampled_file).time
-    assert not resampled.clustered and resampled.describe()["real_hours_represented"] == 8760
+    model.close()
+    model = open_results(resampled_file)
+    assert not model.time.clustered and model.time.describe()["real_hours_represented"] == 8760
+    model.close()
 
 
 def test_clustered_annual_demand_is_weighted(clustered_out):
@@ -215,15 +218,17 @@ def test_spores_cost_above_slack_fails(spores_over_slack_file, tmp_path):
     assert list(summary["checks"]["spores_cost_within_slack"]["above_limit"]) == [1]
 
 
-def test_subset_period_hours(spores_file):
-    """A model of part of a year: the check compares with the modelled period, not with 8760 h."""
-    from tidy_calliope.checks import run_checks
-    from tidy_calliope.outputs import Processor
-    from tidy_calliope.reader import open_results, spore_views
+def test_subset_period_hours(tmp_path):
+    """A model of part of a year (3 days, hourly): the check compares with the modelled period, not with 8760 h."""
+    from conftest import make_model
 
-    model = spore_views(open_results(spores_file))[0]
-    check = run_checks(Processor(model, load_config()), {})["hours_in_period"]
-    assert check["ok"] and check["full_year"]
+    timesteps = pd.date_range("2018-01-01", periods=72, freq="h")
+    path = tmp_path / "three-days.nc"
+    make_model(timesteps, np.ones(72), np.ones(72), np.ones(72)).to_netcdf(path)
+    (summary,) = process(str(path), tmp_path / "out")
+    check = summary["checks"]["hours_in_period"]
+    assert check["ok"] and not check["full_year"] and check["hours"] == 72
+    assert summary["checks_failed"] == []
 
 
 def test_cli_missing_path(tmp_path, capsys):

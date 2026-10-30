@@ -25,14 +25,18 @@ class ModelResults:
     results: xr.Dataset
     spore: int | None = None
     time: TimeInfo | None = field(default=None)
+    # the opened files (DataTrees): kept until `close`, so they are never closed by the garbage collector while
+    # their (lazily read) data is still in use
+    handles: list = field(default_factory=list, repr=False)
 
     def __post_init__(self):
         if self.time is None:
             self.time = TimeInfo(self.inputs)
 
     def close(self):
-        self.inputs.close()
-        self.results.close()
+        for handle in self.handles:
+            handle.close()
+        self.handles.clear()
 
 
 @dataclass
@@ -67,22 +71,26 @@ class ResultFileError(ValueError):
     """A file that cannot be processed: not a Calliope 0.7 result file, or a model without a solution."""
 
 
-def _groups(path: Path) -> tuple[xr.Dataset | None, xr.Dataset]:
+def _groups(path: Path) -> tuple[xr.DataTree, xr.Dataset | None, xr.Dataset]:
+    """The opened file and its `inputs` (None if absent) and `results` groups. Close the file when done."""
     try:
         tree = xr.open_datatree(path)
-        groups = {node.path for node in tree.subtree}
-        results = tree["results"].to_dataset()
-    except (KeyError, OSError, ValueError) as err:
+    except (OSError, ValueError) as err:
         raise ResultFileError(f"{path}: not a Calliope 0.7 result file (needs `inputs` and `results` groups): {err}")
+    groups = {node.path for node in tree.subtree}
+    if "/results" not in groups:
+        tree.close()
+        raise ResultFileError(f"{path}: not a Calliope 0.7 result file (needs `inputs` and `results` groups)")
     inputs = tree["inputs"].to_dataset() if "/inputs" in groups else None
-    return inputs, results
+    return tree, inputs, tree["results"].to_dataset()
 
 
 def open_results(path: str | Path, inputs: xr.Dataset | None = None) -> ModelResults:
     """One result file. `inputs`: for per-SPORE files without inputs (Calliope writes them in `spore_0.nc` only)."""
     path = Path(path)
-    own_inputs, results = _groups(path)
+    tree, own_inputs, results = _groups(path)
     if own_inputs is None and inputs is None:
+        tree.close()
         raise ResultFileError(f"{path}: not a Calliope 0.7 result file (needs `inputs` and `results` groups)")
     inputs = own_inputs if own_inputs is not None else inputs
     if "spores" in inputs.dims:  # per-SPORE files: inputs of spore_0 carry a `spores` dimension of size 1
@@ -90,8 +98,9 @@ def open_results(path: str | Path, inputs: xr.Dataset | None = None) -> ModelRes
     if not results.data_vars:
         termination = results.attrs.get("termination_condition")
         detail = f" (termination condition: {termination})" if termination else ""
+        tree.close()
         raise ResultFileError(f"{path}: no results{detail}: the model was not solved to optimality")
-    return ModelResults(path=path, scenario=path.stem, inputs=inputs, results=results)
+    return ModelResults(path=path, scenario=path.stem, inputs=inputs, results=results, handles=[tree])
 
 
 def spore_views(model: ModelResults) -> list[ModelResults]:
@@ -100,7 +109,8 @@ def spore_views(model: ModelResults) -> list[ModelResults]:
         return [model]
     return [
         ModelResults(path=model.path, scenario=model.scenario, inputs=model.inputs,
-                     results=model.results.sel(spores=s, drop=True), spore=int(s), time=model.time)
+                     results=model.results.sel(spores=s, drop=True), spore=int(s), time=model.time,
+                     handles=model.handles)
         for s in model.results["spores"].values
     ]
 
@@ -125,19 +135,21 @@ def open_run(run: Run) -> list[ModelResults]:
         return spore_views(open_results(run.files[0]))
     # per-SPORE files: the inputs are in spore_0.nc of the same folder (also when only some SPOREs are given)
     folder = run.files[0].parent
-    inputs = None
+    inputs, inputs_tree = None, None
     for candidate in [folder / "spore_0.nc", *run.files]:
         if candidate.exists():
-            own_inputs, _ = _groups(candidate)
+            tree, own_inputs, _ = _groups(candidate)
             if own_inputs is not None:
-                inputs = own_inputs
+                inputs, inputs_tree = own_inputs, tree
                 break
+            tree.close()
     if inputs is None:
         raise ResultFileError(f"{folder}: per-SPORE files without inputs (Calliope writes them in spore_0.nc)")
     views = []
     for f in run.files:
         model = open_results(f, inputs=inputs)
         model.scenario = run.scenario
+        model.handles.append(inputs_tree)  # closed with the run (DataTree.close is idempotent)
         views.extend(spore_views(model))
     return views
 

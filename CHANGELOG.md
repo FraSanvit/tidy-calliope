@@ -25,6 +25,9 @@
 
 ### Fixed
 
+- Result files are now closed explicitly at the end of each run. Before, they were left to Python's garbage
+  collector; with many files opened in one process this could crash the netCDF/HDF5 library (segmentation
+  fault), seen intermittently in the GitHub test runs.
 - Input cost parameters defined for the whole model (no `techs` dimension, e.g. `cost_interest_rate` in the Calliope
   example models) made the input-cost tables fail; they are now reported with their unit only.
 
